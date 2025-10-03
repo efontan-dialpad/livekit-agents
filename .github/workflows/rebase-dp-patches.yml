@@ -1,0 +1,79 @@
+name: Update fork patch branch (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: "Upstream repo (owner/name)"
+        default: "livekit/agents"
+      upstream_branch:
+        description: "Upstream branch"
+        default: "main"
+      target_branch:
+        description: "Your fork branch to update"
+        default: "dp/patches"
+      strategy:
+        description: "How to update your branch"
+        type: choice
+        options: [rebase, merge]
+        default: rebase
+
+permissions:
+  contents: write   # allow pushing with GITHUB_TOKEN
+
+concurrency:
+  group: update-patch-branch
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Add upstream and fetch
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/${{ github.event.inputs.upstream_repo }}.git || true
+          git fetch upstream ${{ github.event.inputs.upstream_branch }} --tags
+
+      - name: Configure bot identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update branch (${{ github.event.inputs.strategy }})
+        id: update
+        run: |
+          set -euo pipefail
+          git checkout "${{ github.event.inputs.target_branch }}"
+          if [ "${{ github.event.inputs.strategy }}" = "rebase" ]; then
+            if git rebase "upstream/${{ github.event.inputs.upstream_branch }}"; then
+              echo "outcome=success" >> "$GITHUB_OUTPUT"
+            else
+              echo "Rebase conflict. Aborting."; git rebase --abort || true
+              echo "outcome=conflict" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            if git merge --no-edit "upstream/${{ github.event.inputs.upstream_branch }}"; then
+              echo "outcome=success" >> "$GITHUB_OUTPUT"
+            else
+              echo "Merge conflict. Aborting."; git merge --abort || true
+              echo "outcome=conflict" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Push updates
+        if: steps.update.outputs.outcome == 'success'
+        run: |
+          set -euo pipefail
+          # Rebase needs force-with-lease; merge is a normal push.
+          if [ "${{ github.event.inputs.strategy }}" = "rebase" ]; then
+            git push --force-with-lease origin "${{ github.event.inputs.target_branch }}"
+          else
+            git push origin "${{ github.event.inputs.target_branch }}"
+          fi
