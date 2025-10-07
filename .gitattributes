@@ -1,2 +1,2 @@
-*.ogg filter=lfs diff=lfs merge=lfs -text
 examples/drive-thru/*.mp3 -filter -diff -merge -text
+examples/** -filter -diff -merge -text
